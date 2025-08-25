@@ -1,7 +1,7 @@
+// src/context/ChatContext.jsx
 import { createContext, useContext, useEffect, useMemo, useReducer } from "react";
 
-// --- Estado + persistencia ---
-const LS_KEY = "devf-chat-state-v2"; // nueva clave para invalidar lo viejo
+const LS_KEY = "devf-chat-state-v3"; // clave nueva para evitar caché viejo
 
 const defaultState = {
   messages: [
@@ -10,20 +10,9 @@ const defaultState = {
   isThinking: false,
 };
 
-function loadState() {
-  try {
-    const raw = localStorage.getItem(LS_KEY);
-    if (!raw) return defaultState;
-    const parsed = JSON.parse(raw);
-    if (!Array.isArray(parsed.messages)) return defaultState;
-    return { ...defaultState, ...parsed };
-  } catch {
-    return defaultState;
-  }
-}
-
 // --- Actions ---
 const ACTIONS = {
+  SET_ALL: "SET_ALL",
   SEND_USER: "SEND_USER",
   ADD_ASSISTANT: "ADD_ASSISTANT",
   CLEAR: "CLEAR",
@@ -33,6 +22,8 @@ const ACTIONS = {
 // --- Reducer ---
 function reducer(state, action) {
   switch (action.type) {
+    case ACTIONS.SET_ALL:
+      return { ...state, messages: action.payload };
     case ACTIONS.SEND_USER: {
       const msg = { id: Date.now(), role: "user", content: action.payload };
       return { ...state, messages: [...state.messages, msg] };
@@ -54,57 +45,92 @@ function reducer(state, action) {
 const ChatStateCtx = createContext(null);
 const ChatDispatchCtx = createContext(null);
 
-// --- Provider ---
 export function ChatProvider({ children }) {
-  const [state, dispatch] = useReducer(reducer, undefined, loadState);
+  const [state, dispatch] = useReducer(reducer, defaultState);
 
-  // Persistencia en localStorage
+  // Persistencia simple para no perder UI si recargas
   useEffect(() => {
-    localStorage.setItem(LS_KEY, JSON.stringify({ messages: state.messages }));
+    try {
+      localStorage.setItem(LS_KEY, JSON.stringify({ messages: state.messages }));
+    } catch (_) {}
   }, [state.messages]);
 
-  // Acciones (backend + utilidades)
+  // Carga inicial desde backend
+  useEffect(() => {
+    (async () => {
+      try {
+        const res = await fetch("/api/messages");
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const data = await res.json();
+        const items = Array.isArray(data.items) && data.items.length > 0
+          ? data.items
+          : defaultState.messages;
+        dispatch({ type: ACTIONS.SET_ALL, payload: items });
+      } catch (e) {
+        console.warn("No se pudo cargar /api/messages, uso defaultState.", e);
+        dispatch({ type: ACTIONS.SET_ALL, payload: defaultState.messages });
+      }
+    })();
+  }, []);
+
   const actions = useMemo(() => {
     return {
-      // Limpia solo la UI (deja localStorage con la conversación inicial)
-      clear: () => dispatch({ type: ACTIONS.CLEAR }),
+      // Limpia backend + estado + localStorage
+      clear: async () => {
+        try {
+          await fetch("/api/messages", { method: "DELETE" });
+        } catch (_) {
+          // si falla, no bloqueamos el reset local
+        }
+        try {
+          localStorage.removeItem(LS_KEY);
+        } catch (_) {}
 
-      // Limpia UI + borra localStorage
-      clearHard: () => {
-        localStorage.removeItem(LS_KEY);
-        dispatch({ type: ACTIONS.CLEAR });
+        dispatch({ type: ACTIONS.SET_THINKING, payload: false });
+        dispatch({ type: ACTIONS.SET_ALL, payload: defaultState.messages });
       },
 
-      // Enviar mensaje al backend
+      // Envía mensaje: guarda user -> pide /api/chat -> guarda assistant -> refleja en UI
       sendMessage: async (text) => {
         const trimmed = text.trim();
         if (!trimmed) return;
 
+        // UI inmediata
         dispatch({ type: ACTIONS.SEND_USER, payload: trimmed });
         dispatch({ type: ACTIONS.SET_THINKING, payload: true });
 
         try {
+          // 1) Guarda el mensaje del usuario en backend
+          await fetch("/api/messages", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ role: "user", content: trimmed }),
+          });
+
+          // 2) Pide respuesta al backend
           const res = await fetch("/api/chat", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ prompt: trimmed }),
           });
-
           if (!res.ok) {
             const err = await res.json().catch(() => ({}));
             throw new Error(err.error || `HTTP ${res.status}`);
           }
-
           const data = await res.json();
-          dispatch({
-            type: ACTIONS.ADD_ASSISTANT,
-            payload: data.reply ?? "Sin respuesta",
+          const replyText = data.reply ?? "Sin respuesta";
+
+          // 3) Guarda respuesta del assistant en backend
+          await fetch("/api/messages", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ role: "assistant", content: replyText }),
           });
+
+          // 4) Refresca UI (añadir assistant local)
+          dispatch({ type: ACTIONS.ADD_ASSISTANT, payload: replyText });
         } catch (e) {
-          dispatch({
-            type: ACTIONS.ADD_ASSISTANT,
-            payload: `Error del servidor: ${e.message}`,
-          });
+          dispatch({ type: ACTIONS.ADD_ASSISTANT, payload: `Error del servidor: ${e.message}` });
         }
       },
     };
@@ -119,7 +145,6 @@ export function ChatProvider({ children }) {
   );
 }
 
-// --- Hook de consumo ---
 export function useChat() {
   const state = useContext(ChatStateCtx);
   const actions = useContext(ChatDispatchCtx);

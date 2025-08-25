@@ -1,5 +1,3 @@
-console.log("✅ Cargando Chat.jsx (context) correcto");
-
 // src/components/Chat.jsx
 import { useRef, useEffect } from "react";
 import { useChat } from "../context/ChatContext";
@@ -20,7 +18,11 @@ export default function Chat() {
         {messages.map((m) => (
           <MessageBubble key={m.id} role={m.role} content={m.content} />
         ))}
-        {isThinking && <div className="text-sm text-neutral-500">El asistente está pensando…</div>}
+        {isThinking && (
+          <div className="text-sm text-neutral-500">
+            El asistente está pensando…
+          </div>
+        )}
         <div ref={endRef} />
       </div>
 
