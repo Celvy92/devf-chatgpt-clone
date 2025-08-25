@@ -1,4 +1,4 @@
-{
+﻿{
   "name": "server",
   "version": "1.0.0",
   "type": "module",
@@ -13,6 +13,6 @@
     "express": "^4.19.2"
   },
   "devDependencies": {
-    "nodemon": "^3.1.4"
+    "nodemon": "^3.1.10"
   }
 }

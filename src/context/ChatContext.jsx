@@ -1,7 +1,7 @@
 import { createContext, useContext, useEffect, useMemo, useReducer } from "react";
 
-// --- Estado inicial (con carga desde localStorage) ---
-const LS_KEY = "devf-chat-state";
+// --- Estado + persistencia ---
+const LS_KEY = "devf-chat-state-v2"; // nueva clave para invalidar lo viejo
 
 const defaultState = {
   messages: [
@@ -50,10 +50,11 @@ function reducer(state, action) {
   }
 }
 
-// --- Context ---
+// --- Contextos ---
 const ChatStateCtx = createContext(null);
 const ChatDispatchCtx = createContext(null);
 
+// --- Provider ---
 export function ChatProvider({ children }) {
   const [state, dispatch] = useReducer(reducer, undefined, loadState);
 
@@ -62,10 +63,19 @@ export function ChatProvider({ children }) {
     localStorage.setItem(LS_KEY, JSON.stringify({ messages: state.messages }));
   }, [state.messages]);
 
-  // Acciones (llamadas al backend)
+  // Acciones (backend + utilidades)
   const actions = useMemo(() => {
     return {
+      // Limpia solo la UI (deja localStorage con la conversación inicial)
       clear: () => dispatch({ type: ACTIONS.CLEAR }),
+
+      // Limpia UI + borra localStorage
+      clearHard: () => {
+        localStorage.removeItem(LS_KEY);
+        dispatch({ type: ACTIONS.CLEAR });
+      },
+
+      // Enviar mensaje al backend
       sendMessage: async (text) => {
         const trimmed = text.trim();
         if (!trimmed) return;
@@ -74,19 +84,27 @@ export function ChatProvider({ children }) {
         dispatch({ type: ACTIONS.SET_THINKING, payload: true });
 
         try {
-          const res = await fetch('/api/chat', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+          const res = await fetch("/api/chat", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ prompt: trimmed }),
           });
+
           if (!res.ok) {
             const err = await res.json().catch(() => ({}));
             throw new Error(err.error || `HTTP ${res.status}`);
           }
+
           const data = await res.json();
-          dispatch({ type: ACTIONS.ADD_ASSISTANT, payload: data.reply ?? 'Sin respuesta' });
+          dispatch({
+            type: ACTIONS.ADD_ASSISTANT,
+            payload: data.reply ?? "Sin respuesta",
+          });
         } catch (e) {
-          dispatch({ type: ACTIONS.ADD_ASSISTANT, payload: `Error del servidor: ${e.message}` });
+          dispatch({
+            type: ACTIONS.ADD_ASSISTANT,
+            payload: `Error del servidor: ${e.message}`,
+          });
         }
       },
     };
@@ -101,7 +119,7 @@ export function ChatProvider({ children }) {
   );
 }
 
-// Hook personalizado para consumir el contexto
+// --- Hook de consumo ---
 export function useChat() {
   const state = useContext(ChatStateCtx);
   const actions = useContext(ChatDispatchCtx);
