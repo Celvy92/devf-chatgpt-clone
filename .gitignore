@@ -1,0 +1,26 @@
+@'
+# Raíz
+node_modules/
+dist/
+build/
+*.log
+
+# Frontend
+.env
+.env.*
+!.env.example
+
+# Backend
+server/.env
+server/.env.*
+!server/.env.example
+server/node_modules/
+
+# Vite
+.vite/
+
+# OS / Editor
+.DS_Store
+Thumbs.db
+.vscode/
+'@ | Out-File -Encoding utf8 .gitignore
