@@ -1,153 +1,96 @@
 // src/context/ChatContext.jsx
-import { createContext, useContext, useEffect, useMemo, useReducer } from "react";
+import { createContext, useContext, useEffect, useReducer } from "react";
 
-const LS_KEY = "devf-chat-state-v3"; // clave nueva para evitar caché viejo
+const ChatContext = createContext(null);
 
-const defaultState = {
-  messages: [
-    { id: 1, role: "assistant", content: "¡Hola! Soy tu asistente. ¿En qué te ayudo hoy?" },
-  ],
-  isThinking: false,
+// Estado inicial
+const initialState = {
+  threads: [],
+  activeThreadId: null,
 };
 
-// --- Actions ---
-const ACTIONS = {
-  SET_ALL: "SET_ALL",
-  SEND_USER: "SEND_USER",
-  ADD_ASSISTANT: "ADD_ASSISTANT",
-  CLEAR: "CLEAR",
-  SET_THINKING: "SET_THINKING",
-};
-
-// --- Reducer ---
+// Reducer
 function reducer(state, action) {
   switch (action.type) {
-    case ACTIONS.SET_ALL:
-      return { ...state, messages: action.payload };
-    case ACTIONS.SEND_USER: {
-      const msg = { id: Date.now(), role: "user", content: action.payload };
-      return { ...state, messages: [...state.messages, msg] };
+    case "NEW_THREAD": {
+      const id = crypto.randomUUID();
+      const thread = { id, title: action.title ?? "Nueva conversación", messages: [] };
+      return { ...state, threads: [thread, ...state.threads], activeThreadId: id };
     }
-    case ACTIONS.ADD_ASSISTANT: {
-      const msg = { id: Date.now() + 1, role: "assistant", content: action.payload };
-      return { ...state, messages: [...state.messages, msg], isThinking: false };
+    case "SET_ACTIVE": {
+      return { ...state, activeThreadId: action.id };
     }
-    case ACTIONS.SET_THINKING:
-      return { ...state, isThinking: action.payload };
-    case ACTIONS.CLEAR:
-      return { ...defaultState };
+    case "ADD_MESSAGE": {
+      const { id, message } = action;
+      const threads = state.threads.map(t => {
+        if (t.id !== id) return t;
+        const updated = { ...t, messages: [...t.messages, message] };
+        if (!t.title || t.title === "Nueva conversación") {
+          const firstUser = updated.messages.find(m => m.role === "user");
+          if (firstUser) updated.title = firstUser.content.slice(0, 40);
+        }
+        return updated;
+      });
+      return { ...state, threads };
+    }
+    case "APPEND_TO_LAST_ASSISTANT": {
+      const { id, chunk } = action;
+      const threads = state.threads.map(t => {
+        if (t.id !== id) return t;
+        const msgs = t.messages.slice();
+        for (let i = msgs.length - 1; i >= 0; i--) {
+          if (msgs[i].role === "assistant") {
+            msgs[i] = { ...msgs[i], content: (msgs[i].content || "") + chunk };
+            break;
+          }
+        }
+        return { ...t, messages: msgs };
+      });
+      return { ...state, threads };
+    }
+    case "CLEAR_ALL": {
+      return initialState;
+    }
     default:
       return state;
   }
 }
 
-// --- Contextos ---
-const ChatStateCtx = createContext(null);
-const ChatDispatchCtx = createContext(null);
+// Carga segura desde localStorage (sin fetch)
+function loadState() {
+  try {
+    const raw = localStorage.getItem("chat_state_v1");
+    if (!raw) return initialState;
+    const parsed = JSON.parse(raw);
+    // Validación mínima
+    if (!parsed || typeof parsed !== "object") return initialState;
+    return {
+      threads: Array.isArray(parsed.threads) ? parsed.threads : [],
+      activeThreadId: parsed.activeThreadId ?? null,
+    };
+  } catch {
+    return initialState;
+  }
+}
 
 export function ChatProvider({ children }) {
-  const [state, dispatch] = useReducer(reducer, defaultState);
+  const [state, dispatch] = useReducer(reducer, undefined, loadState);
 
-  // Persistencia simple para no perder UI si recargas
+  // Guarda en localStorage cuando cambie el estado
   useEffect(() => {
     try {
-      localStorage.setItem(LS_KEY, JSON.stringify({ messages: state.messages }));
-    } catch (_) {}
-  }, [state.messages]);
+      localStorage.setItem("chat_state_v1", JSON.stringify(state));
+    } catch {
+      // ignorar errores de storage
+    }
+  }, [state]);
 
-  // Carga inicial desde backend
-  useEffect(() => {
-    (async () => {
-      try {
-        const res = await fetch("/api/messages");
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        const data = await res.json();
-        const items = Array.isArray(data.items) && data.items.length > 0
-          ? data.items
-          : defaultState.messages;
-        dispatch({ type: ACTIONS.SET_ALL, payload: items });
-      } catch (e) {
-        console.warn("No se pudo cargar /api/messages, uso defaultState.", e);
-        dispatch({ type: ACTIONS.SET_ALL, payload: defaultState.messages });
-      }
-    })();
-  }, []);
-
-  const actions = useMemo(() => {
-    return {
-      // Limpia backend + estado + localStorage
-      clear: async () => {
-        try {
-          await fetch("/api/messages", { method: "DELETE" });
-        } catch (_) {
-          // si falla, no bloqueamos el reset local
-        }
-        try {
-          localStorage.removeItem(LS_KEY);
-        } catch (_) {}
-
-        dispatch({ type: ACTIONS.SET_THINKING, payload: false });
-        dispatch({ type: ACTIONS.SET_ALL, payload: defaultState.messages });
-      },
-
-      // Envía mensaje: guarda user -> pide /api/chat -> guarda assistant -> refleja en UI
-      sendMessage: async (text) => {
-        const trimmed = text.trim();
-        if (!trimmed) return;
-
-        // UI inmediata
-        dispatch({ type: ACTIONS.SEND_USER, payload: trimmed });
-        dispatch({ type: ACTIONS.SET_THINKING, payload: true });
-
-        try {
-          // 1) Guarda el mensaje del usuario en backend
-          await fetch("/api/messages", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ role: "user", content: trimmed }),
-          });
-
-          // 2) Pide respuesta al backend
-          const res = await fetch("/api/chat", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ prompt: trimmed }),
-          });
-          if (!res.ok) {
-            const err = await res.json().catch(() => ({}));
-            throw new Error(err.error || `HTTP ${res.status}`);
-          }
-          const data = await res.json();
-          const replyText = data.reply ?? "Sin respuesta";
-
-          // 3) Guarda respuesta del assistant en backend
-          await fetch("/api/messages", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ role: "assistant", content: replyText }),
-          });
-
-          // 4) Refresca UI (añadir assistant local)
-          dispatch({ type: ACTIONS.ADD_ASSISTANT, payload: replyText });
-        } catch (e) {
-          dispatch({ type: ACTIONS.ADD_ASSISTANT, payload: `Error del servidor: ${e.message}` });
-        }
-      },
-    };
-  }, []);
-
-  return (
-    <ChatStateCtx.Provider value={state}>
-      <ChatDispatchCtx.Provider value={actions}>
-        {children}
-      </ChatDispatchCtx.Provider>
-    </ChatStateCtx.Provider>
-  );
+  const value = { state, dispatch };
+  return <ChatContext.Provider value={value}>{children}</ChatContext.Provider>;
 }
 
 export function useChat() {
-  const state = useContext(ChatStateCtx);
-  const actions = useContext(ChatDispatchCtx);
-  if (!state || !actions) throw new Error("useChat debe usarse dentro de <ChatProvider>");
-  return { ...state, ...actions };
+  const ctx = useContext(ChatContext);
+  if (!ctx) throw new Error("useChat debe usarse dentro de <ChatProvider/>");
+  return ctx;
 }
