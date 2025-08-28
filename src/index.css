@@ -2,4 +2,12 @@
 @tailwind components;
 @tailwind utilities;
 
-html, body, #root { height: 100%; }
+/* Fondo y texto global según el tema en <html> */
+@layer base {
+  html {
+    @apply bg-neutral-50 text-neutral-900;
+  }
+  html.dark {
+    @apply bg-neutral-900 text-neutral-50;
+  }
+}
