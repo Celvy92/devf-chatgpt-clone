@@ -1,43 +1,23 @@
 ﻿// server/index.js
-import "dotenv/config";
 import express from "express";
-import cors from "cors";
-import { logger } from "./middlewares/logger.js";
-import { notFound, errorHandler } from "./middlewares/errors.js";
-import { initDB, addMessage } from "./db.js";
-import { chatRouter } from "./routes/chat.js";
-import { messagesRouter } from "./routes/messages.js";
 
 const app = express();
+const PORT = process.env.PORT || 3000;
 
-// Middlewares
-app.use(cors());
+// Middleware básico
 app.use(express.json());
-app.use(logger);
 
-// Rutas
-app.get("/", (req, res) => res.send("✅ Backend Express funcionando en http://localhost:3001"));
-app.get("/api/health", (req, res) =>
-  res.json({ ok: true, service: "chat-backend", time: new Date().toISOString() })
-);
-app.use("/api/chat", chatRouter);
-app.use("/api/messages", messagesRouter);
+// Endpoint Hola Mundo
+app.get("/", (req, res) => {
+  res.send("Hola, mundo desde Express!");
+});
 
-// 404 + errores
-app.use(notFound);
-app.use(errorHandler);
+// Endpoint de prueba/health
+app.get("/api/health", (req, res) => {
+  res.json({ ok: true, service: "express", time: new Date().toISOString() });
+});
 
-// Arranque
-const PORT = process.env.PORT || 3001;
-
-const start = async () => {
-  await initDB();
-
-  // Mensaje de bienvenida (solo si la DB está “vacía”)
-  // (initDB ya se encarga de sembrar uno por defecto si no existe)
-  app.listen(PORT, () => {
-    console.log(`✅ Backend Express funcionando en http://localhost:${PORT}`);
-  });
-};
-
-start();
+// Arrancar servidor
+app.listen(PORT, () => {
+  console.log(`✅ Servidor Express corriendo en http://localhost:${PORT}`);
+});
