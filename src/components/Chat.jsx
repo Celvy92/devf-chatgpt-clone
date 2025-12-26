@@ -1,33 +1,34 @@
-import { useRef, useEffect, useState } from "react";
+// src/components/Chat.jsx
+import { useRef, useEffect } from "react";
+import { useChat } from "../context/ChatContext";
 import MessageBubble from "./MessageBubble";
 import ChatInput from "./ChatInput";
 
 export default function Chat() {
-  const [messages, setMessages] = useState([
-    { id: 1, role: "assistant", content: "¡Hola! Soy tu asistente. ¿En qué te ayudo hoy?" },
-  ]);
-
+  const { messages, sendMessage, isThinking } = useChat();
   const endRef = useRef(null);
-  useEffect(() => { endRef.current?.scrollIntoView({ behavior: "smooth" }); }, [messages]);
 
-  const handleSend = (text) => {
-    const trimmed = text.trim();
-    if (!trimmed) return;
-    setMessages(prev => [...prev, { id: Date.now(), role: "user", content: trimmed }]);
-    setTimeout(() => {
-      setMessages(prev => [...prev, { id: Date.now()+1, role: "assistant", content: "¡Recibido! (validación con React Hook Form lista)" }]);
-    }, 300);
-  };
+  useEffect(() => {
+    endRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [messages]);
 
   return (
     <section className="flex-1 flex flex-col">
       <div className="flex-1 overflow-y-auto p-4 md:p-6 space-y-4">
-        {messages.map(m => <MessageBubble key={m.id} role={m.role} content={m.content} />)}
+        {messages.map((m) => (
+          <MessageBubble key={m.id} role={m.role} content={m.content} />
+        ))}
+        {isThinking && (
+          <div className="text-sm text-neutral-500">
+            El asistente está pensando…
+          </div>
+        )}
         <div ref={endRef} />
       </div>
+
       <div className="border-t border-neutral-200 p-3">
         <div className="mx-auto max-w-3xl">
-          <ChatInput onSend={handleSend} />
+          <ChatInput onSend={sendMessage} />
         </div>
       </div>
     </section>
